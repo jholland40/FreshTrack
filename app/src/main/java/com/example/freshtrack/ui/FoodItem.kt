@@ -7,5 +7,6 @@ data class FoodItem(
     val name: String,
     val category: String,
     val expiryDate: String,
-    val quantity: Int = 1
+    val quantity: Int = 1,
+    val isExpiringSoon: Boolean = false
 )
