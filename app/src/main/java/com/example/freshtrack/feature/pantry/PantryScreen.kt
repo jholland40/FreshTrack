@@ -36,7 +36,7 @@ import java.time.temporal.ChronoUnit
 @Composable
 fun PantryScreen(
     foods: List<FoodItem>,
-    onDelete: (Long) -> Unit,
+    onDelete: (String) -> Unit,
 ) {
     if (foods.isEmpty()) {
         Column(
@@ -83,7 +83,7 @@ fun PantryScreen(
 @Composable
 fun FoodCard(
     food: FoodItem,
-    onDelete: (Long) -> Unit,
+    onDelete: (String) -> Unit,
 ) {
     val days = daysUntil(food.expirationDate)
     val status = when {
