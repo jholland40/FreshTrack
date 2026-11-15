@@ -22,6 +22,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.freshtrack.core.data.repository.FoodRepository
+import com.example.freshtrack.core.model.FoodItem as RealFoodItem
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
+import java.time.format.DateTimeParseException
+import java.time.temporal.ChronoUnit
 
 // Navigation Screens
 sealed class Screen(val route: String, val title: String, val icon: androidx.compose.ui.graphics.vector.ImageVector) {
@@ -36,21 +43,17 @@ enum class ItemFilter { ALL, EXPIRING_SOON }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun FreshTrackDashboard() {
+fun FreshTrackDashboard(repository: FoodRepository) {
     var currentScreen by remember { mutableStateOf<Screen>(Screen.Home) }
     var isLoggedIn by remember { mutableStateOf(true) }
     var isDarkMode by remember { mutableStateOf(false) }
     var activeFilter by remember { mutableStateOf(ItemFilter.ALL) }
 
-    // Initial Inventory Stash with urgent items
-    val inventoryList = remember {
-        mutableStateListOf(
-            FoodItem(name = "Whole Milk", category = "Dairy", expiryDate = "Sep 21", quantity = 1, isExpiringSoon = true),
-            FoodItem(name = "Doritos Nacho Cheese", category = "Snacks", expiryDate = "Nov 12", quantity = 1, isExpiringSoon = false),
-            FoodItem(name = "Dr Pepper 12oz", category = "Beverages", expiryDate = "Dec 05", quantity = 6, isExpiringSoon = false),
-            FoodItem(name = "Organic Spinach", category = "Produce", expiryDate = "Sep 23", quantity = 1, isExpiringSoon = false)
-        )
-    }
+    // Real data: same repository/ViewModel the rest of the app uses, so items
+    // actually save to and load from Firestore instead of a fake in-memory list.
+    val viewModel = remember(repository) { FoodViewModel(repository) }
+    val foods by viewModel.items.collectAsStateWithLifecycle()
+    val inventoryList = remember(foods) { foods.map { it.toDashboardItem() } }
 
     var showAddDialog by remember { mutableStateOf(false) }
 
@@ -190,13 +193,37 @@ fun FreshTrackDashboard() {
                     AddItemModal(
                         onDismiss = { showAddDialog = false },
                         onAddItem = { newItem ->
-                            inventoryList.add(0, newItem)
+                            // Saves to Firestore via the real repository; the snapshot
+                            // listener above picks it up and the list updates itself.
+                            viewModel.addFood(newItem)
                         }
                     )
                 }
             }
         }
     }
+}
+
+// Converts a real, Firestore-backed FoodItem into the dashboard's own display
+// shape: a friendly "Sep 21" style date, and an isExpiringSoon flag computed
+// from the real expiration date instead of a manually-set checkbox.
+private val dashboardDateFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("MMM d")
+
+private fun RealFoodItem.toDashboardItem(): FoodItem {
+    val parsedDate = try {
+        LocalDate.parse(expirationDate)
+    } catch (_: DateTimeParseException) {
+        null
+    }
+    val daysLeft = parsedDate?.let { ChronoUnit.DAYS.between(LocalDate.now(), it) }
+    return FoodItem(
+        id = id,
+        name = name,
+        category = category,
+        expiryDate = parsedDate?.format(dashboardDateFormatter) ?: expirationDate,
+        quantity = quantity,
+        isExpiringSoon = daysLeft != null && daysLeft <= 3,
+    )
 }
 
 @Composable

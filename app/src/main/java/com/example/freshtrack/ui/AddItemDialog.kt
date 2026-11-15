@@ -7,24 +7,36 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.freshtrack.core.data.network.OpenFoodFactsService
+import com.example.freshtrack.core.data.network.PluProLookup
+import com.example.freshtrack.core.model.FoodItem as RealFoodItem
+import kotlinx.coroutines.launch
+import java.time.LocalDate
 
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddItemModal(
     onDismiss: () -> Unit,
-    onAddItem: (FoodItem) -> Unit
+    onAddItem: (RealFoodItem) -> Unit
 ) {
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+
+    var barcode by remember { mutableStateOf("") }
+    var pluCode by remember { mutableStateOf("") }
+    var lookupMessage by remember { mutableStateOf<String?>(null) }
+
     var name by remember { mutableStateOf("") }
     var category by remember { mutableStateOf("Snacks") }
-    var expiryDate by remember { mutableStateOf("") }
+    var expiryDate by remember { mutableStateOf(LocalDate.now().plusDays(7).toString()) }
     var quantityStr by remember { mutableStateOf("1") }
-    var isUrgent by remember { mutableStateOf(false) }
 
-    val categories = listOf("Snacks", "Beverages", "Produce", "Dairy", "Sweets", "Bakery", "Meat")
+    val categories = listOf("Snacks", "Beverages", "Produce", "Dairy", "Sweets", "Bakery", "Meat", "Other")
     var expanded by remember { mutableStateOf(false) }
 
     AlertDialog(
@@ -44,6 +56,80 @@ fun AddItemModal(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
+                // --- Packaged goods: barcode lookup via Open Food Facts ---
+                Text(
+                    text = "Packaged item? Look it up by barcode",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = Color(0xFF2E7D32),
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    OutlinedTextField(
+                        value = barcode,
+                        onValueChange = { barcode = it },
+                        label = { Text("Barcode") },
+                        shape = RoundedCornerShape(12.dp),
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Button(
+                        onClick = {
+                            lookupMessage = "Looking up barcode..."
+                            coroutineScope.launch {
+                                val result = OpenFoodFactsService.lookup(barcode.trim())
+                                if (result != null) {
+                                    name = result.name
+                                    category = result.category ?: category
+                                    lookupMessage = "Found: ${result.name}"
+                                } else {
+                                    lookupMessage = "No match found, enter details manually."
+                                }
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50)),
+                        shape = RoundedCornerShape(12.dp),
+                    ) {
+                        Text("Look up", color = Color.White)
+                    }
+                }
+
+                // --- Loose produce: PLU sticker code lookup ---
+                Text(
+                    text = "Loose produce? Look it up by PLU code",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = Color(0xFF2E7D32),
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    OutlinedTextField(
+                        value = pluCode,
+                        onValueChange = { pluCode = it },
+                        label = { Text("PLU code") },
+                        shape = RoundedCornerShape(12.dp),
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Button(
+                        onClick = {
+                            val result = PluProLookup.lookup(context, pluCode.trim())
+                            if (result != null) {
+                                name = result.name
+                                category = result.category ?: category
+                                lookupMessage = "Found: ${result.name}"
+                            } else {
+                                lookupMessage = "No match found, enter details manually."
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50)),
+                        shape = RoundedCornerShape(12.dp),
+                    ) {
+                        Text("Look up", color = Color.White)
+                    }
+                }
+                if (lookupMessage != null) {
+                    Text(text = lookupMessage!!, color = Color(0xFF2E7D32), fontSize = 12.sp)
+                }
+
+                HorizontalDivider()
+
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
@@ -65,7 +151,7 @@ fun AddItemModal(
                         label = { Text("Category") },
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
                         modifier = Modifier
-                            .menuAnchor()
+                            .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
                             .fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp)
                     )
@@ -89,7 +175,7 @@ fun AddItemModal(
                     OutlinedTextField(
                         value = expiryDate,
                         onValueChange = { expiryDate = it },
-                        label = { Text("Expiry (Sep 21)") },
+                        label = { Text("Expiration (YYYY-MM-DD)") },
                         shape = RoundedCornerShape(12.dp),
                         singleLine = true,
                         modifier = Modifier.weight(1f)
@@ -103,24 +189,6 @@ fun AddItemModal(
                         modifier = Modifier.weight(0.6f)
                     )
                 }
-
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(top = 4.dp)
-                ) {
-                    Checkbox(
-                        checked = isUrgent,
-                        onCheckedChange = { isUrgent = it },
-                        colors = CheckboxDefaults.colors(checkedColor = Color(0xFFE53935))
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = "Mark as Expiring Soon (Urgent ⚠️)",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 12.sp,
-                        color = Color(0xFFC62828)
-                    )
-                }
             }
         },
         confirmButton = {
@@ -129,12 +197,14 @@ fun AddItemModal(
                     if (name.isNotBlank()) {
                         val qty = quantityStr.toIntOrNull() ?: 1
                         onAddItem(
-                            FoodItem(
-                                name = name,
-                                category = category,
-                                expiryDate = if (expiryDate.isBlank()) "Soon" else expiryDate,
+                            RealFoodItem(
+                                name = name.trim(),
+                                category = category.trim(),
                                 quantity = qty,
-                                isExpiringSoon = isUrgent
+                                expirationDate = expiryDate.trim(),
+                                location = "Pantry",
+                                barcode = barcode.trim().ifBlank { pluCode.trim() },
+                                estimatedValue = 0.0,
                             )
                         )
                         onDismiss()

@@ -4,7 +4,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import com.example.freshtrack.core.data.repository.FoodRepository
-import com.example.freshtrack.ui.FreshTrackApp
+import com.example.freshtrack.ui.FreshTrackDashboard
 import com.example.freshtrack.ui.theme.FreshTrackTheme
 import com.google.firebase.auth.FirebaseAuth
 
@@ -20,7 +20,7 @@ class MainActivity : ComponentActivity() {
         val repository = FoodRepository()
         setContent {
             FreshTrackTheme {
-                FreshTrackApp(repository)
+                FreshTrackDashboard(repository)
             }
         }
     }
