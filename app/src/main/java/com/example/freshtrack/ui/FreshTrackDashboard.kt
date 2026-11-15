@@ -23,7 +23,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.freshtrack.core.data.ReportMetrics
 import com.example.freshtrack.core.data.repository.FoodRepository
+import com.example.freshtrack.core.model.FoodHistoryRecord
+import com.example.freshtrack.core.model.FoodStatus
 import com.example.freshtrack.core.model.FoodItem as RealFoodItem
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -48,12 +51,23 @@ fun FreshTrackDashboard(repository: FoodRepository) {
     var isLoggedIn by remember { mutableStateOf(true) }
     var isDarkMode by remember { mutableStateOf(false) }
     var activeFilter by remember { mutableStateOf(ItemFilter.ALL) }
+    var showReports by remember { mutableStateOf(false) }
 
     // Real data: same repository/ViewModel the rest of the app uses, so items
     // actually save to and load from Firestore instead of a fake in-memory list.
     val viewModel = remember(repository) { FoodViewModel(repository) }
     val foods by viewModel.items.collectAsStateWithLifecycle()
+    val history by viewModel.history.collectAsStateWithLifecycle()
     val inventoryList = remember(foods) { foods.map { it.toDashboardItem() } }
+
+    // Resolving an item (not a plain delete) records why it left the pantry,
+    // so Reports has real history to work from. Plain delete is reserved for
+    // correcting a mistaken entry only.
+    val onResolveItem: (String, FoodStatus) -> Unit = resolve@{ itemId, status ->
+        val realItem = foods.find { it.id == itemId } ?: return@resolve
+        viewModel.resolveFood(realItem, status)
+    }
+    val onDeleteMistake: (String) -> Unit = { itemId -> viewModel.deleteFood(itemId) }
 
     var showAddDialog by remember { mutableStateOf(false) }
 
@@ -72,6 +86,11 @@ fun FreshTrackDashboard(repository: FoodRepository) {
             listOf(Color(0xFF66BB6A), Color(0xFFA8E6CF))
         }
     )
+
+    if (showReports) {
+        ReportsScreen(history = history, onBack = { showReports = false })
+        return
+    }
 
     if (!isLoggedIn) {
         WelcomeScreen(
@@ -168,14 +187,18 @@ fun FreshTrackDashboard(repository: FoodRepository) {
                 when (currentScreen) {
                     Screen.Home -> HomeScreen(
                         inventoryList = inventoryList,
+                        history = history,
                         ombréBrush = ombréBrush,
                         activeFilter = activeFilter,
                         onSelectFilter = { filter ->
                             activeFilter = filter
                         },
+                        onOpenReports = { showReports = true },
                         isDarkMode = isDarkMode,
                         cardBackground = cardBackground,
-                        textColor = textColor
+                        textColor = textColor,
+                        onResolve = onResolveItem,
+                        onDeleteMistake = onDeleteMistake,
                     )
                     Screen.Inventory -> InventoryScreen(
                         inventoryList = inventoryList,
@@ -183,10 +206,16 @@ fun FreshTrackDashboard(repository: FoodRepository) {
                         onClearFilter = { activeFilter = ItemFilter.ALL },
                         isDarkMode = isDarkMode,
                         cardBackground = cardBackground,
-                        textColor = textColor
+                        textColor = textColor,
+                        onResolve = onResolveItem,
+                        onDeleteMistake = onDeleteMistake,
                     )
                     Screen.Scanner -> ScannerScreen(isDarkMode)
-                    Screen.Profile -> ProfileScreen(onLogout = { isLoggedIn = false }, isDarkMode = isDarkMode)
+                    Screen.Profile -> ProfileScreen(
+                        onLogout = { isLoggedIn = false },
+                        isDarkMode = isDarkMode,
+                        onViewReports = { showReports = true },
+                    )
                 }
 
                 if (showAddDialog) {
@@ -267,18 +296,24 @@ fun WelcomeScreen(onGetStarted: () -> Unit, ombréBrush: Brush, isDarkMode: Bool
 @Composable
 fun HomeScreen(
     inventoryList: List<FoodItem>,
+    history: List<FoodHistoryRecord>,
     ombréBrush: Brush,
     activeFilter: ItemFilter,
     onSelectFilter: (ItemFilter) -> Unit,
+    onOpenReports: () -> Unit,
     isDarkMode: Boolean,
     cardBackground: Color,
-    textColor: Color
+    textColor: Color,
+    onResolve: (String, FoodStatus) -> Unit,
+    onDeleteMistake: (String) -> Unit,
 ) {
     val expiringCount = inventoryList.count { it.isExpiringSoon }
     val displayList = when (activeFilter) {
         ItemFilter.EXPIRING_SOON -> inventoryList.filter { it.isExpiringSoon }
         ItemFilter.ALL -> inventoryList
     }
+    val totalSaved = remember(history) { ReportMetrics.totalSaved(history) }
+    val streak = remember(history) { ReportMetrics.zeroWasteStreakDays(history) }
 
     Column(
         modifier = Modifier
@@ -325,12 +360,11 @@ fun HomeScreen(
 
         Spacer(modifier = Modifier.height(10.dp))
 
-        // INTERACTIVE SUMMARY CARDS GRID
+        // INTERACTIVE SUMMARY CARDS GRID - 2x2 so the home page isn't lopsided
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // Total Items Card
             ClickableSummaryCard(
                 title = "Total Items",
                 count = "${inventoryList.size}",
@@ -341,8 +375,6 @@ fun HomeScreen(
                 onClick = { onSelectFilter(ItemFilter.ALL) },
                 modifier = Modifier.weight(1f)
             )
-
-            // Expiring Soon Card (Red Urgent Palette)
             ClickableSummaryCard(
                 title = "Expiring Soon",
                 count = "$expiringCount",
@@ -352,6 +384,34 @@ fun HomeScreen(
                 isDarkMode = isDarkMode,
                 isUrgent = true,
                 onClick = { onSelectFilter(ItemFilter.EXPIRING_SOON) },
+                modifier = Modifier.weight(1f)
+            )
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            ClickableSummaryCard(
+                title = "Est. Savings",
+                count = "$%.0f".format(totalSaved),
+                emoji = "💰",
+                bgColor = if (isDarkMode) Color(0xFF1B3A2A) else Color(0xFFE8F5E9),
+                borderColor = Color.Transparent,
+                isDarkMode = isDarkMode,
+                onClick = onOpenReports,
+                modifier = Modifier.weight(1f)
+            )
+            ClickableSummaryCard(
+                title = "Zero-Waste Streak",
+                count = if (streak != null) "${streak}d" else "—",
+                emoji = "🔥",
+                bgColor = if (isDarkMode) Color(0xFF3E2E16) else Color(0xFFFFF3E0),
+                borderColor = Color.Transparent,
+                isDarkMode = isDarkMode,
+                onClick = onOpenReports,
                 modifier = Modifier.weight(1f)
             )
         }
@@ -386,7 +446,13 @@ fun HomeScreen(
             modifier = Modifier.fillMaxSize()
         ) {
             items(displayList) { item ->
-                InventoryCard(item = item, isDarkMode = isDarkMode, cardBackground = cardBackground)
+                InventoryCard(
+                    item = item,
+                    isDarkMode = isDarkMode,
+                    cardBackground = cardBackground,
+                    onResolve = onResolve,
+                    onDeleteMistake = onDeleteMistake,
+                )
             }
         }
     }
@@ -451,7 +517,9 @@ fun InventoryScreen(
     onClearFilter: () -> Unit,
     isDarkMode: Boolean,
     cardBackground: Color,
-    textColor: Color
+    textColor: Color,
+    onResolve: (String, FoodStatus) -> Unit,
+    onDeleteMistake: (String) -> Unit,
 ) {
     val filteredList = when (activeFilter) {
         ItemFilter.EXPIRING_SOON -> inventoryList.filter { it.isExpiringSoon }
@@ -478,14 +546,26 @@ fun InventoryScreen(
         }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxSize()) {
             items(filteredList) { item ->
-                InventoryCard(item, isDarkMode, cardBackground)
+                InventoryCard(
+                    item = item,
+                    isDarkMode = isDarkMode,
+                    cardBackground = cardBackground,
+                    onResolve = onResolve,
+                    onDeleteMistake = onDeleteMistake,
+                )
             }
         }
     }
 }
 
 @Composable
-fun InventoryCard(item: FoodItem, isDarkMode: Boolean, cardBackground: Color) {
+fun InventoryCard(
+    item: FoodItem,
+    isDarkMode: Boolean,
+    cardBackground: Color,
+    onResolve: (String, FoodStatus) -> Unit,
+    onDeleteMistake: (String) -> Unit,
+) {
     val categoryEmoji = when (item.category.lowercase()) {
         "snacks" -> "🍿"
         "beverages" -> "🥤"
@@ -499,6 +579,7 @@ fun InventoryCard(item: FoodItem, isDarkMode: Boolean, cardBackground: Color) {
 
     val badgeBg = if (item.isExpiringSoon) Color(0xFFFFEBEE) else Color(0xFFE8F5E9)
     val badgeTextColor = if (item.isExpiringSoon) Color(0xFFC62828) else Color(0xFF2E7D32)
+    var menuOpen by remember { mutableStateOf(false) }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -509,7 +590,7 @@ fun InventoryCard(item: FoodItem, isDarkMode: Boolean, cardBackground: Color) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(14.dp),
+                .padding(start = 14.dp, top = 14.dp, bottom = 14.dp, end = 4.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -552,6 +633,39 @@ fun InventoryCard(item: FoodItem, isDarkMode: Boolean, cardBackground: Color) {
                     fontWeight = FontWeight.Bold
                 )
             }
+
+            Box {
+                IconButton(onClick = { menuOpen = true }) {
+                    Icon(
+                        Icons.Default.MoreVert,
+                        contentDescription = "Remove ${item.name}",
+                        tint = if (isDarkMode) Color.LightGray else Color.Gray,
+                    )
+                }
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    DropdownMenuItem(
+                        text = { Text("✅ Mark Consumed") },
+                        onClick = { menuOpen = false; onResolve(item.id, FoodStatus.CONSUMED) },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("🎁 Mark Donated") },
+                        onClick = { menuOpen = false; onResolve(item.id, FoodStatus.DONATED) },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("🌱 Mark Composted") },
+                        onClick = { menuOpen = false; onResolve(item.id, FoodStatus.COMPOSTED) },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("🗑️ Mark Discarded") },
+                        onClick = { menuOpen = false; onResolve(item.id, FoodStatus.DISCARDED) },
+                    )
+                    HorizontalDivider()
+                    DropdownMenuItem(
+                        text = { Text("✖️ Remove (mistake, no record)", color = Color.Gray) },
+                        onClick = { menuOpen = false; onDeleteMistake(item.id) },
+                    )
+                }
+            }
         }
     }
 }
@@ -573,7 +687,7 @@ fun ScannerScreen(isDarkMode: Boolean) {
 }
 
 @Composable
-fun ProfileScreen(onLogout: () -> Unit, isDarkMode: Boolean) {
+fun ProfileScreen(onLogout: () -> Unit, isDarkMode: Boolean, onViewReports: () -> Unit) {
     Column(
         modifier = Modifier.fillMaxSize().padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -592,9 +706,19 @@ fun ProfileScreen(onLogout: () -> Unit, isDarkMode: Boolean) {
         Text(text = "freshtrack.user@example.com", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
         Spacer(modifier = Modifier.height(32.dp))
         Button(
+            onClick = onViewReports,
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50)),
+            shape = RoundedCornerShape(16.dp),
+            modifier = Modifier.fillMaxWidth(0.8f),
+        ) {
+            Text("View Reports 📊", color = Color.White, fontWeight = FontWeight.Bold)
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+        Button(
             onClick = onLogout,
             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935)),
-            shape = RoundedCornerShape(16.dp)
+            shape = RoundedCornerShape(16.dp),
+            modifier = Modifier.fillMaxWidth(0.8f),
         ) {
             Text("Log Out 👋", color = Color.White, fontWeight = FontWeight.Bold)
         }
