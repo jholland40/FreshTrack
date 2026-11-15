@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import com.example.freshtrack.core.data.network.OpenFoodFactsService
 import com.example.freshtrack.core.data.network.PluProLookup
 import com.example.freshtrack.core.model.FoodItem
+import com.example.freshtrack.core.model.ProductInfo
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.format.DateTimeParseException
@@ -33,17 +34,27 @@ import java.time.format.DateTimeParseException
  */
 @Composable
 fun AddFoodScreen(
+    prefill: ProductInfo? = null,
     onSave: (FoodItem) -> Unit,
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
-    var barcode by rememberSaveable { mutableStateOf("") }
+    // prefill comes from the Scan tab; the user can still edit everything.
+    var barcode by rememberSaveable { mutableStateOf(prefill?.barcode.orEmpty()) }
     var pluCode by rememberSaveable { mutableStateOf("") }
-    var lookupMessage by rememberSaveable { mutableStateOf<String?>(null) }
+    var lookupMessage by rememberSaveable {
+        mutableStateOf(
+            when {
+                prefill == null -> null
+                prefill.name.isBlank() -> "Scanned ${prefill.barcode}. No match found, enter details manually."
+                else -> "Scanned: ${prefill.name}"
+            },
+        )
+    }
 
-    var name by rememberSaveable { mutableStateOf("") }
-    var category by rememberSaveable { mutableStateOf("Other") }
+    var name by rememberSaveable { mutableStateOf(prefill?.name.orEmpty()) }
+    var category by rememberSaveable { mutableStateOf(prefill?.category ?: "Other") }
     var quantity by rememberSaveable { mutableStateOf("1") }
     var expiration by rememberSaveable { mutableStateOf(LocalDate.now().plusDays(7).toString()) }
     var location by rememberSaveable { mutableStateOf("Refrigerator") }

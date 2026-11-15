@@ -24,6 +24,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.freshtrack.core.data.repository.FoodRepository
+import com.example.freshtrack.core.model.ProductInfo
 import com.example.freshtrack.feature.insights.InsightsScreen
 import com.example.freshtrack.feature.pantry.AddFoodScreen
 import com.example.freshtrack.feature.pantry.PantryScreen
@@ -37,6 +38,8 @@ fun FreshTrackApp(repository: FoodRepository) {
     val viewModel = remember(repository) { FoodViewModel(repository) }
     val foods by viewModel.items.collectAsStateWithLifecycle()
     var currentDestination by rememberSaveable { mutableStateOf(NavDestination.Pantry) }
+    // Product confirmed on the Scan tab, waiting to pre-fill the Add form.
+    var scannedProduct by remember { mutableStateOf<ProductInfo?>(null) }
 
     Scaffold(
         topBar = {
@@ -51,7 +54,10 @@ fun FreshTrackApp(repository: FoodRepository) {
                         selected = currentDestination == destination,
                         label = destination.label,
                         icon = destination.icon,
-                    ) { currentDestination = destination }
+                    ) {
+                        scannedProduct = null
+                        currentDestination = destination
+                    }
                 }
             }
         },
@@ -73,11 +79,17 @@ fun FreshTrackApp(repository: FoodRepository) {
                     foods = foods,
                     onDelete = viewModel::deleteFood,
                 )
-                NavDestination.Add -> AddFoodScreen { item ->
+                NavDestination.Add -> AddFoodScreen(prefill = scannedProduct) { item ->
                     viewModel.addFood(item)
+                    scannedProduct = null
                     currentDestination = NavDestination.Pantry
                 }
-                NavDestination.Scan -> ScannerScreen()
+                NavDestination.Scan -> ScannerScreen(
+                    onAddProduct = { product ->
+                        scannedProduct = product
+                        currentDestination = NavDestination.Add
+                    },
+                )
                 NavDestination.Insights -> InsightsScreen(foods = foods)
                 NavDestination.Settings -> SettingsScreen()
             }
