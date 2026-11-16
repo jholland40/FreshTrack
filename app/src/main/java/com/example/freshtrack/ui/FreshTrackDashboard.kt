@@ -365,7 +365,7 @@ private fun NameEntryScreen(onSubmit: (String) -> Unit) {
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "Just once - so your inventory and reports are tied to your name, not a random ID.",
+                text = "Your Inventory & Reports are tied to your name. Enter it just once.",
                 style = MaterialTheme.typography.bodySmall,
                 color = Color.Gray,
             )
