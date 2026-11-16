@@ -14,25 +14,40 @@ import androidx.compose.ui.unit.sp
 import com.example.freshtrack.core.data.network.OpenFoodFactsService
 import com.example.freshtrack.core.data.network.PluProLookup
 import com.example.freshtrack.core.model.FoodItem as RealFoodItem
+import com.example.freshtrack.core.model.ProductInfo
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 
 
+/**
+ * @param prefill A product handed off from the Scan tab after a successful
+ * barcode read. Pre-fills name/category/barcode but every field stays
+ * editable - matches the same pre-fill behavior AddFoodScreen uses.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddItemModal(
+    prefill: ProductInfo? = null,
     onDismiss: () -> Unit,
     onAddItem: (RealFoodItem) -> Unit
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
-    var barcode by remember { mutableStateOf("") }
+    var barcode by remember { mutableStateOf(prefill?.barcode.orEmpty()) }
     var pluCode by remember { mutableStateOf("") }
-    var lookupMessage by remember { mutableStateOf<String?>(null) }
+    var lookupMessage by remember {
+        mutableStateOf(
+            when {
+                prefill == null -> null
+                prefill.name.isBlank() -> "Scanned ${prefill.barcode}. No match found, enter details manually."
+                else -> "Scanned: ${prefill.name}"
+            },
+        )
+    }
 
-    var name by remember { mutableStateOf("") }
-    var category by remember { mutableStateOf("Snacks") }
+    var name by remember { mutableStateOf(prefill?.name.orEmpty()) }
+    var category by remember { mutableStateOf(prefill?.category ?: "Snacks") }
     var expiryDate by remember { mutableStateOf(LocalDate.now().plusDays(7).toString()) }
     var quantityStr by remember { mutableStateOf("1") }
 
