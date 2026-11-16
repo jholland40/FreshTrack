@@ -13,6 +13,12 @@ class FoodViewModel(private val repository: FoodRepository) : ViewModel() {
     val items: StateFlow<List<FoodItem>> = repository.items
     val history: StateFlow<List<FoodHistoryRecord>> = repository.history
 
+    // Lets the UI show a snackbar when a save/update/delete fails instead of
+    // just... doing nothing, which is what made Jackson's "item won't save"
+    // issue so hard to pin down.
+    val errorMessage: StateFlow<String?> = repository.errorMessage
+    fun clearError() = repository.clearError()
+
     fun addFood(item: FoodItem) = viewModelScope.launch { repository.add(item) }
 
     /** For fixing a mistaken entry only - does not create a history record. */

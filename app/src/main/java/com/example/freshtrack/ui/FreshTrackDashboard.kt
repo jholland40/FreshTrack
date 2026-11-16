@@ -94,6 +94,17 @@ fun FreshTrackDashboard(repository: FoodRepository) {
     val history by viewModel.history.collectAsStateWithLifecycle()
     val inventoryList = remember(foods) { foods.map { it.toDashboardItem() } }
 
+    // Surface save/update/delete failures (e.g. not signed in yet) as a
+    // visible snackbar instead of a silent no-op.
+    val errorMessage by viewModel.errorMessage.collectAsStateWithLifecycle()
+    val snackbarHostState = remember { SnackbarHostState() }
+    LaunchedEffect(errorMessage) {
+        errorMessage?.let { message ->
+            snackbarHostState.showSnackbar(message)
+            viewModel.clearError()
+        }
+    }
+
     // Resolving an item (not a plain delete) records why it left the pantry,
     // so Reports has real history to work from. Plain delete is reserved for
     // correcting a mistaken entry only.
@@ -215,6 +226,7 @@ fun FreshTrackDashboard(repository: FoodRepository) {
                     )
                 )
             },
+            snackbarHost = { SnackbarHost(snackbarHostState) },
             bottomBar = {
                 NavigationBar(
                     containerColor = if (isDarkMode) Color(0xFF1E1E1E) else Color.White,

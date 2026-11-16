@@ -22,6 +22,17 @@ class FoodRepository(
     private val _history = MutableStateFlow<List<FoodHistoryRecord>>(emptyList())
     val history: StateFlow<List<FoodHistoryRecord>> = _history.asStateFlow()
 
+    // Surfaces write failures to the UI instead of failing silently. Before
+    // this, if a device wasn't signed in yet (e.g. anonymous auth hadn't
+    // completed), add/resolve/delete just did nothing with no error anywhere
+    // - which looked exactly like "my item didn't save" with zero clue why.
+    private val _errorMessage = MutableStateFlow<String?>(null)
+    val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
+
+    fun clearError() {
+        _errorMessage.value = null
+    }
+
     init {
         auth.addAuthStateListener { firebaseAuth ->
             firebaseAuth.currentUser?.uid?.let { uid ->
@@ -54,18 +65,26 @@ class FoodRepository(
     }
 
     suspend fun add(item: FoodItem) {
-        val uid = auth.currentUser?.uid ?: return
-        val data = hashMapOf(
-            "name" to item.name,
-            "category" to item.category,
-            "quantity" to item.quantity,
-            "expirationDate" to item.expirationDate,
-            "location" to item.location,
-            "barcode" to item.barcode,
-            "estimatedValue" to item.estimatedValue,
-            "userId" to uid,
-        )
-        db.collection("items").add(data).await()
+        val uid = auth.currentUser?.uid
+        if (uid == null) {
+            _errorMessage.value = "Not signed in yet - check your internet connection, then reopen the app."
+            return
+        }
+        try {
+            val data = hashMapOf(
+                "name" to item.name,
+                "category" to item.category,
+                "quantity" to item.quantity,
+                "expirationDate" to item.expirationDate,
+                "location" to item.location,
+                "barcode" to item.barcode,
+                "estimatedValue" to item.estimatedValue,
+                "userId" to uid,
+            )
+            db.collection("items").add(data).await()
+        } catch (e: Exception) {
+            _errorMessage.value = "Couldn't save item: ${e.message ?: "unknown error"}"
+        }
     }
 
     /**
@@ -74,7 +93,11 @@ class FoodRepository(
      * should go through resolve() instead, so Reports stays accurate.
      */
     suspend fun delete(id: String) {
-        db.collection("items").document(id).delete().await()
+        try {
+            db.collection("items").document(id).delete().await()
+        } catch (e: Exception) {
+            _errorMessage.value = "Couldn't remove item: ${e.message ?: "unknown error"}"
+        }
     }
 
     /**
@@ -83,17 +106,25 @@ class FoodRepository(
      * This is what the pantry UI's "remove" action calls in normal use.
      */
     suspend fun resolve(item: FoodItem, status: FoodStatus) {
-        val uid = auth.currentUser?.uid ?: return
-        val historyData = hashMapOf(
-            "name" to item.name,
-            "category" to item.category,
-            "estimatedValue" to item.estimatedValue,
-            "status" to status.name,
-            "resolvedDate" to LocalDate.now().toString(),
-            "userId" to uid,
-        )
-        db.collection("history").add(historyData).await()
-        db.collection("items").document(item.id).delete().await()
+        val uid = auth.currentUser?.uid
+        if (uid == null) {
+            _errorMessage.value = "Not signed in yet - check your internet connection, then reopen the app."
+            return
+        }
+        try {
+            val historyData = hashMapOf(
+                "name" to item.name,
+                "category" to item.category,
+                "estimatedValue" to item.estimatedValue,
+                "status" to status.name,
+                "resolvedDate" to LocalDate.now().toString(),
+                "userId" to uid,
+            )
+            db.collection("history").add(historyData).await()
+            db.collection("items").document(item.id).delete().await()
+        } catch (e: Exception) {
+            _errorMessage.value = "Couldn't update item: ${e.message ?: "unknown error"}"
+        }
     }
 
     private fun DocumentSnapshot.toFoodItem(): FoodItem? {
