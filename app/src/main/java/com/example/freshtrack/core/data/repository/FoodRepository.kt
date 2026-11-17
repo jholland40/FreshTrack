@@ -6,6 +6,7 @@ import com.example.freshtrack.core.model.FoodStatus
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.ListenerRegistration
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -33,17 +34,53 @@ class FoodRepository(
         _errorMessage.value = null
     }
 
+    // Tracks the currently-attached items/history listeners so we can detach
+    // them before attaching new ones, and so we never attach a second,
+    // redundant pair for the SAME uid. Without this guard, every time
+    // Firebase's auth-state listener fired with a uid - which can legitimately
+    // happen more than once per session, and definitely happens if sign-in
+    // is ever (incorrectly) retried mid-session - this code attached a brand
+    // new pair of real-time listeners on top of whichever ones were already
+    // running, with no cleanup. Two things followed from that: the growing
+    // pile of never-removed listeners is a real memory leak (worse the longer
+    // a session runs and the more it's already competing for memory, e.g.
+    // while screen recording is also active), and if a new listener pair was
+    // ever attached for a DIFFERENT uid, the old and new listeners raced to
+    // overwrite _items/_history - which, if the new uid had no data yet,
+    // could make a user's whole pantry flash empty mid-session: it looks
+    // exactly like being logged out.
+    private var itemsListener: ListenerRegistration? = null
+    private var historyListener: ListenerRegistration? = null
+    private var listenersForUid: String? = null
+
     init {
         auth.addAuthStateListener { firebaseAuth ->
-            firebaseAuth.currentUser?.uid?.let { uid ->
-                listenForItems(uid)
-                listenForHistory(uid)
+            val uid = firebaseAuth.currentUser?.uid
+            if (uid == null) {
+                detachListeners()
+                return@addAuthStateListener
             }
+            if (uid == listenersForUid) {
+                // Already listening for exactly this uid - do nothing.
+                return@addAuthStateListener
+            }
+            detachListeners()
+            listenersForUid = uid
+            listenForItems(uid)
+            listenForHistory(uid)
         }
     }
 
+    private fun detachListeners() {
+        itemsListener?.remove()
+        historyListener?.remove()
+        itemsListener = null
+        historyListener = null
+        listenersForUid = null
+    }
+
     private fun listenForItems(uid: String) {
-        db.collection("items")
+        itemsListener = db.collection("items")
             .whereEqualTo("userId", uid)
             .addSnapshotListener { snapshot, _ ->
                 if (snapshot != null) {
@@ -54,7 +91,7 @@ class FoodRepository(
     }
 
     private fun listenForHistory(uid: String) {
-        db.collection("history")
+        historyListener = db.collection("history")
             .whereEqualTo("userId", uid)
             .addSnapshotListener { snapshot, _ ->
                 if (snapshot != null) {

@@ -1,5 +1,6 @@
 package com.example.freshtrack.feature.scanner
 
+import android.util.Log
 import androidx.camera.core.ExperimentalGetImage
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
@@ -8,6 +9,8 @@ import com.google.mlkit.vision.barcode.BarcodeScannerOptions
 import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
+
+private const val TAG = "FreshTrackScanner"
 
 /**
  * CameraX analyzer that runs every preview frame through ML Kit's on-device
@@ -45,21 +48,39 @@ class BarcodeAnalyzer(
 
     @androidx.annotation.OptIn(ExperimentalGetImage::class)
     override fun analyze(imageProxy: ImageProxy) {
-        val mediaImage = imageProxy.image
-        if (!enabled || mediaImage == null) {
-            imageProxy.close()
-            return
-        }
-
-        val input = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
-        scanner.process(input)
-            .addOnSuccessListener { barcodes ->
-                // ML Kit listeners run on the main thread, so it is safe to
-                // update Compose state from onBarcodeDetected.
-                val value = barcodes.firstNotNullOfOrNull { it.rawValue?.takeIf(String::isNotBlank) }
-                handleRead(value)
+        // A raced/invalid camera frame - the image already closed or
+        // recycled by CameraX before we got to it - must never crash the
+        // whole app. This is far more likely to happen right as the camera
+        // starts up, and under heavy system load (e.g. screen recording
+        // running at the same time), which matches exactly when crashes
+        // were being seen. Skip the bad frame and keep scanning instead.
+        try {
+            val mediaImage = imageProxy.image
+            if (!enabled || mediaImage == null) {
+                imageProxy.close()
+                return
             }
-            .addOnCompleteListener { imageProxy.close() }
+
+            val input = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
+            scanner.process(input)
+                .addOnSuccessListener { barcodes ->
+                    // ML Kit listeners run on the main thread, so it is safe to
+                    // update Compose state from onBarcodeDetected.
+                    val value = barcodes.firstNotNullOfOrNull { it.rawValue?.takeIf(String::isNotBlank) }
+                    handleRead(value)
+                }
+                .addOnFailureListener { e ->
+                    Log.w(TAG, "Barcode detection failed on this frame - skipping it", e)
+                }
+                .addOnCompleteListener { imageProxy.close() }
+        } catch (e: Exception) {
+            Log.w(TAG, "Skipping a bad camera frame instead of crashing", e)
+            try {
+                imageProxy.close()
+            } catch (_: Exception) {
+                // Already closed - nothing else to do.
+            }
+        }
     }
 
     private fun handleRead(value: String?) {
