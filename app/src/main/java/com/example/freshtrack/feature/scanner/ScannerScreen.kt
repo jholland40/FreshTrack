@@ -8,6 +8,11 @@ import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.Camera
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -37,6 +42,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -67,6 +73,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.freshtrack.core.data.network.OpenFoodFactsService
 import com.example.freshtrack.core.model.ProductInfo
+import kotlinx.coroutines.delay
 
 /** Where the scanner is in the scan → look up → confirm flow. */
 private sealed interface ScanState {
@@ -117,6 +124,14 @@ private fun BarcodeScannerContent(
     var torchOn by remember { mutableStateOf(false) }
     var cameraError by remember { mutableStateOf<String?>(null) }
 
+    // Text + visibility for the transient green "Added to pantry" confirmation.
+    // Kept as two separate pieces of state (rather than a nullable label) so
+    // the text never flips to "null" mid-fade: the label only ever changes
+    // when a NEW item is added, while toastVisible alone drives the fade.
+    // Scanning resumes immediately when an item is added - this toast never blocks it.
+    var addedLabel by remember { mutableStateOf("") }
+    var toastVisible by remember { mutableStateOf(false) }
+
     val analyzer = remember {
         BarcodeAnalyzer { barcode ->
             haptics.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -136,9 +151,30 @@ private fun BarcodeScannerContent(
         }
     }
 
+    // Auto-dismiss the "Added to pantry" toast after ~3 seconds. Keyed on
+    // addedLabel too, so adding a second item while the first toast is still
+    // showing restarts the full 3-second window for the new item instead of
+    // being cut short by the first item's timer.
+    LaunchedEffect(toastVisible, addedLabel) {
+        if (toastVisible) {
+            delay(3000)
+            toastVisible = false
+        }
+    }
+
     fun scanAgain() {
         state = ScanState.Scanning
         analyzer.enabled = true
+    }
+
+    // Hands the product to the caller, shows the green confirmation, AND
+    // immediately resets to Scanning so the camera starts looking for the
+    // next barcode right away - it no longer waits on the toast's timer.
+    fun confirmAdd(product: ProductInfo) {
+        onAddProduct(product)
+        addedLabel = product.name.ifBlank { "Barcode ${product.barcode}" }
+        toastVisible = true
+        scanAgain()
     }
 
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
@@ -167,6 +203,35 @@ private fun BarcodeScannerContent(
                 .align(Alignment.TopCenter)
                 .padding(top = 32.dp, start = 24.dp, end = 24.dp),
         )
+
+        // Transient "Added to pantry" confirmation - fades in/out, never blocks scanning.
+        AnimatedVisibility(
+            visible = toastVisible,
+            enter = fadeIn() + slideInVertically(initialOffsetY = { -it / 2 }),
+            exit = fadeOut() + slideOutVertically(targetOffsetY = { -it / 2 }),
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 96.dp, start = 24.dp, end = 24.dp),
+        ) {
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = Color(0xFF2E7D32),
+                shadowElevation = 6.dp,
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                ) {
+                    Icon(Icons.Default.CheckCircle, contentDescription = null, tint = Color.White)
+                    Spacer(Modifier.size(8.dp))
+                    Text(
+                        text = "Added “$addedLabel” to pantry",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            }
+        }
 
         // Torch toggle
         if (camera?.cameraInfo?.hasFlashUnit() == true) {
@@ -220,7 +285,7 @@ private fun BarcodeScannerContent(
                             "Barcode ${s.product.barcode}",
                         ).joinToString(" • "),
                         primaryLabel = "Add to pantry",
-                        onPrimary = { onAddProduct(s.product) },
+                        onPrimary = { confirmAdd(s.product) },
                         secondaryLabel = "Scan again",
                         onSecondary = { scanAgain() },
                     )
@@ -230,7 +295,7 @@ private fun BarcodeScannerContent(
                         body = "Barcode ${s.barcode} isn't in the Open Food Facts database (or you're offline). You can still add it and enter the details yourself.",
                         primaryLabel = "Add manually",
                         onPrimary = {
-                            onAddProduct(ProductInfo(barcode = s.barcode, name = "", source = "Manual"))
+                            confirmAdd(ProductInfo(barcode = s.barcode, name = "", source = "Manual"))
                         },
                         secondaryLabel = "Scan again",
                         onSecondary = { scanAgain() },
